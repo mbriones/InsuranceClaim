@@ -1,0 +1,223 @@
+---
+title: "AON Data Exploration"
+author: "Byteflow Dynamics"
+date: "11/20/2017"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(ggplot2)
+
+```
+
+
+
+#Data
+
+```{r}
+data <- read.csv("Table.csv", stringsAsFactors = FALSE)
+names(data)[names(data) == "DAÑO"] <- "DANO"
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("ñ", "n", x)
+              }))
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("ó", "o", x)
+              }))
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("á", "a", x)
+              }))
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("é", "e", x)
+              }))
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("Í", "I", x)
+              }))
+
+data <- data.frame(lapply(data, function(x) {
+          gsub("Ñ", "N", x)
+              }))
+
+data <- data.frame(lapply(data, as.character), stringsAsFactors=FALSE)
+
+head(data)
+```
+
+
+
+
+#Data Wrangling
+
+We removed rows where IMPORTE is missing, as well as rows where DAÑO is "No Definido" or "Desconocido" and COMUNIDAD_AUTONOMA is missing. We also kept only the categorical, non-coded variables (plus IMPORTE) for the purpose of this analysis.
+
+```{r}
+dat <- data %>%
+  select(-1) %>%
+  filter(!is.na(IMPORTE)) %>% #Remove rows where IMPORTE is NA
+  filter(COMUNIDAD_AUTONOMA != "") %>%
+  select(c(DANO,ESPECIALIDAD,LUGAR,CENTRO,IMPORTE,COMUNIDAD_AUTONOMA))
+dat <- dat[!(dat$DANO == "No Definido" | dat$DANO == "Desconocido"), ]
+dat$IMPORTE <- as.numeric(dat$IMPORTE)
+
+head(dat)
+```
+
+#Analysis of Variance
+
+We performed analysis of variance on the dataset to determine which variables are highly correlated with IMPORTE. 
+
+```{r}
+aovres <- aov(IMPORTE ~ DANO + ESPECIALIDAD + LUGAR + COMUNIDAD_AUTONOMA, dat)
+summary(aovres)
+```
+
+The result shows variables DAÑO,ESPECIALIDAD,LUGAR,  COMUNIDAD_AUTONOMA are all significant.
+
+# Exploratory data analysis 
+
+Here we show some graphs related to the two variables DAÑO and COMUNIDAD_AUTONOMA. The frequency plot shows which types of injury or regions are more frequently reported. The mean IMPORTE plot shows the average cost of a claim for each type of injury or from each region. 
+
+- DAÑO
+
+```{r}
+dat_dano <- dat %>%
+  group_by(DANO) %>%
+  summarise(count = n(), cost_mean = mean(IMPORTE)) %>%
+  arrange(desc(cost_mean))
+
+ggplot(dat_dano) +
+  geom_col(aes(x=DANO, y=count)) +
+  coord_flip() +
+  ggtitle("Frequency of each DAÑO value")
+
+ggplot(dat_dano) +
+  geom_col(aes(x=DANO, y=cost_mean)) +
+  coord_flip() +
+  ggtitle("Mean IMPORTE for each DAÑO value")
+```
+
+From these plots, it looks like Osteomuscular, Muerte, and Daño Material are the most frequent types of injury, and Neurológico grave, Daño al niño o al recién nacid, Coma are the most expensive types of injury. It is understandable that these severe injuries are more expensive and less frequent.
+
+
+
+- COMUNIDAD_AUTONOMA
+
+```{r}
+dat_ca <- dat %>%
+  group_by(COMUNIDAD_AUTONOMA) %>%
+  summarise(count = n(), cost_mean = mean(IMPORTE)) %>%
+  arrange(desc(cost_mean))
+
+ggplot(dat_ca) +
+  geom_col(aes(x=COMUNIDAD_AUTONOMA, y=count)) +
+  coord_flip() +
+  ggtitle("Frequency of each COMUNIDAD_AUTONOMA value")
+
+ggplot(dat_ca) +
+  geom_col(aes(x=COMUNIDAD_AUTONOMA, y=cost_mean)) +
+  coord_flip() +
+  ggtitle("Mean IMPORTE for each COMUNIDAD_AUTONOMA value")
+```
+
+The average claim cost varies from region to region. 
+
+
+# Basic Machine Learning 
+
+We use Classification Trees, which is a machine learning method used to predict categorical outcomes, to model and predict the cost level (high, medium, low) based on the injury type (DAÑO) and region (COMUNIDAD_AUTONOMA). First, I divided IMPORTE into 2 cost levels.
+
+
+```{r}
+# new section
+
+dat_min <- dat %>%
+  filter(dat$IMPORTE <= 3000) %>%
+  mutate(cost = 'Bajo')
+dat_hi <- dat %>%
+  filter(dat$IMPORTE >3001)%>%
+  mutate(cost = 'Alto')
+datex <- bind_rows(dat_min, dat_hi)
+
+
+head(datex)
+```
+
+Next, we build a classification tree model. We train the model using 70% of the data and check the fit.
+
+
+```{r}
+set.seed(101)
+alpha     <- 0.7 # percentage of training set
+datfac <- datex
+datfac$DANO <- factor(datfac$DAN)
+datfac$COMUNIDAD_AUTONOMA <- factor(datfac$COMUNIDAD_AUTONOMA)
+datfac$LUGAR <- factor(datfac$LUGAR)
+datfac$ESPECIALIDAD <- factor(datfac$ESPECIALIDAD)
+
+datfac$cost <- factor(datfac$cost)
+
+inTrain   <- sample(1:nrow(datfac), alpha * nrow(datfac))
+train.set <- datfac[inTrain,]
+test.set  <- datfac[-inTrain,]
+
+fit <- rpart(cost ~ DANO + COMUNIDAD_AUTONOMA,
+             method="class", data=train.set) #it will take a few min
+
+printcp(fit)
+```
+
+Here is the visualization of the tree.
+
+```{r}
+rpart.plot(fit)
+```
+
+We use the rest 30% of data to test the model. 
+
+```{r}
+maxidx <- function(arr) {
+  return(which(arr == max(arr)))
+}
+
+
+pred <- predict(fit,test.set)
+idx <- apply(pred, c(1), maxidx)
+prediction <- c('high', 'low')[idx]
+confMat <- table(test.set$cost, prediction)
+accuracy <- sum(diag(confMat))/sum(confMat)
+accuracy
+```
+
+
+Accuracy rate: 72.4%. 
+
+These results can be dramaticly improved with better data and more time. Trees are nice in interpretibility but not so great at predictability. Given more time and resources we would train the data on several models. The models would also improve over time as it will learn on new sets of data coming in. 
+
+
+dataMB <- data.frame(DANO = "Dermatologico", COMUNIDAD_AUTONOMA = "MADRID")
+predictMB <- max(predict(fit, dataMB))
+classMB <- as.character(predict(fit, dataMB, type = "class"))
+
+predict(fit, dataMB, type = "class")
+
+ifelse(classMB == "Alto", predictMB[1], predictMB[2])
+
+qplot(datex$IMPORTE,
+      geom="histogram",
+      binwidth = 100,
+      xlim = c(-1,5000))
+      
+datex2$log <- log(datex2$IMPORTE)
+
+datex2 <- datex[datex$IMPORTE >= 0, ]
+
