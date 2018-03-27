@@ -1,0 +1,203 @@
+---
+title: "People Analytics"
+author: "Miguel Briones"
+date: "3/27/2018"
+output: ioslides_presentation
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(flexdashboard)
+library(ggrepel)
+library(shiny)
+library(ggplot2)
+library(plotly)
+library(plyr)
+library(tidyverse)
+library(leaflet)
+library(maps)
+library(scales)
+library(sp)
+library(rgdal)
+library(maptools)
+library(httr)
+library(broom)
+library(ggmap)
+library(wordcloud)
+```
+
+## What is People Analytics
+
+- A data-driven approach to inform your people practices, programs and processes.
+
+- Analytical techniques, ranging from reporting and metrics to predictive analytics to experimental research can help you uncover new insights, solve people problems and direct your HR actions.
+
+- A foundational building block that informs actions and ultimately keep employers 
+
+
+## Examples of People Analytics
+- Knowing the length of time it takes to fill a position can help you assess the efficiency of your recruiting process.
+
+- Knowing your turnover rate can be a useful indicator of your organizational culture, health, and finances.
+
+- A career path  metric can help break out your various career ladders by measuring how many internal moves are   promotions versus lateral transfers across different departments and specialties.
+
+- Knowing the revienue per employee statistics can help you determine how over or understaffed your organization might be by examining the growth of your revenue over time.
+
+## Example - Where do Queens College students end up?
+
+Queens College needed to monitor the value of their degrees. The value of a STEM degree continues to rise, while the value of a humanities degree declines. Queens College wanted to understand how two specific degrees, Computer Science & English, fared on the job market.
+
+## Methods of Action
+
+- Scraped LinkedIn Profiles for Queens College graduates to gain insight into job and job history
+
+- Scraped Glassdoor for salary related to current job for Queens College graduate
+
+## Results - Computer Science in the Workforce
+```{r, echo = FALSE}
+cuny <- read.csv("Data/Queens/cunylinkedin.csv", stringsAsFactors = F)
+glassdravg <- read.csv("Data/Queens/glassdooraveragesalary.csv", stringsAsFactors = F)
+glassdrsal <- read.csv("Data/Queens/glassdoorsalary.csv", stringsAsFactors = F)
+
+cuny$AvgSalary <- glassdravg$AverageSalary[match(cuny$Job, glassdravg$Job)]
+cuny$Salary <- glassdrsal$Salary[match(cuny$JobCompany, glassdrsal$JobCompany)]
+cuny$Sector[is.na(cuny$Salary)] <- "Unemployed/Not Found"
+
+cuny$Salary[grepl("PHD", cuny$JobTitle)] <- 35530
+cuny$Salary[grepl("PhD", cuny$JobTitle)] <- 35530
+cuny$Salary[grepl("Doctoral", cuny$JobTitle)] <- 35530
+cuny$Salary[grepl("Teaching Assistant", cuny$JobTitle)] <- 35530
+cuny$Salary[grepl("Graduate Student", cuny$JobTitle)] <- 35530
+cuny$Salary[grepl("Unknown Company", cuny$Company)] <- NA
+
+cuny$Salary[grepl("NYC Department of Education", cuny$Company)] <- 58600
+cuny$Sector[grepl("NYC Department of Education", cuny$Company)] <- "Public Education"
+
+topskillsQueensCS <- read.csv("Data/Queens/topskillsQueensCS.csv")
+topskillsQueensCS[c("X")] <- list(NULL)
+topskillsQueensCS <- subset(topskillsQueensCS, select=c(Skills, Count))
+colnames(topskillsQueensCS) <- c("Skills", "Number of Graduates")
+
+topskillsQueensEN <- read.csv("Data/Queens/topskillsQueensEN.csv")
+topskillsQueensEN[c("X")] <- list(NULL)
+topskillsQueensEN <- subset(topskillsQueensEN, select=c(Skills, Count))
+colnames(topskillsQueensEN) <- c("Skills", "Number of Graduates")
+
+sectorcount <- subset(cuny, Degree == "Computer Science" & School == "Queens College", select = c(Sector, Salary))
+sectorcount$Count <- rep(1)
+sectorcount <- aggregate(Count ~ Sector, data = sectorcount, sum)
+salarysector <- subset(cuny, Degree == "Computer Science" & School == "Queens College", select = c(Sector, Salary))
+salarysector <- aggregate(Salary ~ Sector, data = salarysector, mean)
+sectorcount$Salary <- salarysector$Salary[match(sectorcount$Sector, salarysector$Sector)]
+
+QueensPieCS <- plot_ly(sectorcount, labels = ~Sector, values = ~Count, type = 'pie',textposition = 'outside',textinfo = 'label+percent', hoverinfo = 'text', text = ~paste('Average Salary of $', round(Salary))) %>%
+  layout(title = 'Queens College Computer Science',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+QueensPieCS
+```
+
+## Results - English in the Workforce
+```{r, echo=FALSE}
+sectorENcount <- subset(cuny, Degree == "English" & School == "Queens College", select = c(Sector, Salary))
+sectorENcount$Count <- rep(1)
+sectorENcount <- aggregate(Count ~ Sector, data = sectorENcount, sum)
+salaryENsector <- subset(cuny, Degree == "English" & School == "Queens College", select = c(Sector, Salary))
+salaryENsector <- aggregate(Salary ~ Sector, data = salaryENsector, mean)
+sectorENcount$Salary <- salaryENsector$Salary[match(sectorENcount$Sector, salaryENsector$Sector)]
+
+QueensPieEN <- plot_ly(sectorENcount, labels = ~Sector, values = ~Count, type = 'pie',textposition = 'outside',textinfo = 'label+percent', hoverinfo = 'text', text = ~paste('Average Salary of $', round(Salary))) %>%
+  layout(title = 'Queens College English',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+QueensPieEN
+```
+
+
+## Results - Value of Queens College Degree
+```{r, echo=FALSE}
+Queenssalaryyear <- subset(cuny, School == "Queens College" & (!is.na(Salary)), 
+                              select = c(Degree, AvgSalary, YearGrad, Salary))
+
+     
+Queenssalaryyear2 <- Queenssalaryyear %>% group_by(Degree, YearGrad) %>% summarize(Current = mean(Salary))
+
+Queenssalaryyear3 <- Queenssalaryyear %>% group_by(Degree, YearGrad) %>% summarize(Average = mean(AvgSalary))
+
+ComputerSciCurrent <- subset(Queenssalaryyear2, Degree == "Computer Science", select = c(YearGrad, Current))
+
+ComputerSciAverage <- subset(Queenssalaryyear3, Degree == "Computer Science", select = c(YearGrad, Average))
+
+EnglishCurrent <- subset(Queenssalaryyear2, Degree == "English", select = c(YearGrad, Current))
+
+EnglishAverage <- subset(Queenssalaryyear3, Degree == "English", select = c(YearGrad, Average))
+
+colnames(ComputerSciCurrent) <- c("YearGrad", "CurrentCS")
+
+colnames(ComputerSciAverage) <- c("YearGrad", "AverageCS")
+
+colnames(EnglishCurrent) <- c("YearGrad", "CurrentEN")
+
+colnames(EnglishAverage) <- c("YearGrad", "AverageEN")
+
+dataplotly <- Reduce(function(x, y) merge(x, y, all=TRUE), list(ComputerSciAverage, ComputerSciCurrent, EnglishAverage, EnglishCurrent))
+
+
+
+Queenssalaryyearplot <- plot_ly(dataplotly, x = ~YearGrad, y = ~CurrentCS, name = 'CS Current Salary', type = 'scatter', mode = 'lines', line = list(color = 'rgb(0, 0, 128)', width = 4)) %>%
+  add_trace(y = ~AverageCS, name = 'CS Average Salary', line = list(color = 'rgb(65,105,225)', width = 4, dash = 'dash')) %>%
+  add_trace(y = ~CurrentEN, name = 'EN Current Salary', line = list(color = 'rgb(139,0,0)', width = 4)) %>%
+  add_trace(y = ~AverageEN, name = 'EN Average Salary', line = list(color = 'rgb(250,128,114)', width = 4, dash = 'dash')) %>%
+  layout(title = "Salaries for Queens College Graduates",
+         xaxis = list(title = "Year Graduated"),
+         yaxis = list (title = "Salary (In U.S. Dollars)"))
+
+
+Queenssalaryyearplot 
+```
+
+## Results - Top Skills for Computer Science Graduates
+```{r, echo=FALSE}
+topskillsQueensCS$`Number of Graduates` <- gsub(",", "", topskillsQueensCS$`Number of Graduates`)
+
+topskillsQueensCS$`Number of Graduates`<-as.character(topskillsQueensCS$`Number of Graduates`)
+
+topskillsQueensCS$`Number of Graduates`<-as.numeric(topskillsQueensCS$`Number of Graduates`)
+
+piequeensCSskills <- plot_ly(topskillsQueensCS, labels = ~Skills, values = ~`Number of Graduates`, type = 'pie',textposition = 'outside',textinfo = 'label') %>%
+  layout(title = 'Queens CS Skills',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+piequeensCSskills
+```
+
+## Results - Top Skills for English Graduates
+```{r, echo=FALSE}
+topskillsQueensEN$`Number of Graduates` <- gsub(",", "", topskillsQueensEN$`Number of Graduates`)
+
+topskillsQueensEN$`Number of Graduates`<-as.character(topskillsQueensEN$`Number of Graduates`)
+
+topskillsQueensEN$`Number of Graduates`<-as.numeric(topskillsQueensEN$`Number of Graduates`)
+
+piequeensENskills <- plot_ly(topskillsQueensEN, labels = ~Skills, values = ~`Number of Graduates`, type = 'pie',textposition = 'outside',textinfo = 'label') %>%
+  layout(title = 'Queens EN Skills',
+         xaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE),
+         yaxis = list(showgrid = FALSE, zeroline = FALSE, showticklabels = FALSE))
+
+piequeensENskills
+```
+
+
+## Further Applications
+- Education: Nudging students in the right direction
+- Understanding how employees can value from their benefits
+- Nudging employees for health and wellness
+- Nudging employees for retirement
+- Hiring to fit your team  Sabermetrics for the workplace
+- Fair pay practices
+
